@@ -45,6 +45,15 @@ flags.DEFINE_string('tb_log_dir', 'logit_adjustment/log',
 
 
 def main(_):
+  # Initialize TPUs.
+  resolver = tf.distribute.cluster_resolver.TPUClusterResolver(tpu='')
+  tf.config.experimental_connect_to_cluster(resolver)
+  # This is the TPU initialization code that has to be at the beginning.
+  tf.tpu.experimental.initialize_tpu_system(resolver)
+  print("All devices: ", tf.config.list_logical_devices('TPU'))
+
+  # TPU Stratergy.
+  strategy = tf.distribute.TPUStrategy(resolver)
 
   # Prepare the datasets.
   dataset = utils.dataset_mappings()[FLAGS.dataset]
@@ -53,9 +62,6 @@ def main(_):
                                           FLAGS.train_batch_size, True)
   test_dataset = utils.create_tf_dataset(dataset, FLAGS.data_home,
                                          FLAGS.test_batch_size, False)
-
-  # Model to be trained.
-  model = models.cifar_resnet32(dataset.num_classes)
 
   # Read the base probabilities to use for logit adjustment.
   base_probs_path = os.path.join(FLAGS.data_home,
@@ -70,27 +76,29 @@ def main(_):
     else:
       base_probs = None
 
-  # Build the loss function.
-  loss_fn = utils.build_loss_fn(FLAGS.mode == 'loss', base_probs, FLAGS.tau)
+  with strategy.scope():
+    model = models.cifar_resnet32(dataset.num_classes)
 
-  # Prepare the metrics, the optimizer, etc.
-  train_acc_metric = tf.keras.metrics.SparseCategoricalAccuracy()
-  test_acc_metric = tf.keras.metrics.SparseCategoricalAccuracy()
-  posthoc_adjusting = FLAGS.mode == 'posthoc'
-  if posthoc_adjusting:
-    test_adj_acc_metric = tf.keras.metrics.SparseCategoricalAccuracy()
+    learning_rate = utils.LearningRateSchedule(
+        schedule=dataset.lr_schedule,
+        steps_per_epoch=batches_per_epoch,
+        base_learning_rate=0.1,
+    )
 
-  learning_rate = utils.LearningRateSchedule(
-      schedule=dataset.lr_schedule,
-      steps_per_epoch=batches_per_epoch,
-      base_learning_rate=0.1,
-  )
+    optimizer = tf.keras.optimizers.SGD(
+        learning_rate,
+        momentum=0.9,
+        nesterov=True,
+    )
 
-  optimizer = tf.keras.optimizers.SGD(
-      learning_rate,
-      momentum=0.9,
-      nesterov=True,
-  )
+    loss_fn = utils.build_loss_fn(FLAGS.mode == 'loss', base_probs, FLAGS.tau)
+
+    # Prepare the metrics, the optimizer, etc.
+    train_acc_metric = tf.keras.metrics.SparseCategoricalAccuracy()
+    test_acc_metric = tf.keras.metrics.SparseCategoricalAccuracy()
+    posthoc_adjusting = FLAGS.mode == 'posthoc'
+    if posthoc_adjusting:
+      test_adj_acc_metric = tf.keras.metrics.SparseCategoricalAccuracy()
 
   # Prepare Tensorboard summary writers.
   train_summary_writer = tf.summary.create_file_writer(
@@ -100,9 +108,8 @@ def main(_):
 
   # Train for num_epochs iterations over the train set.
   for epoch in range(dataset.num_epochs):
-
-    # Iterate over the train dataset.
-    for step, (x, y) in enumerate(train_dataset):
+    # Step Function
+    def step_fn(step, x, y):
       with tf.GradientTape() as tape:
         logits = model(x, training=True)
         loss_value = loss_fn(y, logits)
@@ -119,6 +126,10 @@ def main(_):
         with train_summary_writer.as_default():
           tf.summary.scalar(
               'batch loss', loss_value, step=epoch * batches_per_epoch + step)
+
+    # Iterate over the train dataset.
+    for step, (x, y) in enumerate(train_dataset):
+      strategy.run(step_fn, args=(step, x, y))
 
     # Display train metrics at the end of each epoch.
     train_acc = train_acc_metric.result()
