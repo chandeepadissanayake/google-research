@@ -48,7 +48,7 @@ def main(_):
   tf.config.run_functions_eagerly(True)
   
   # Initialize TPUs.
-  resolver = tf.distribute.cluster_resolver.TPUClusterResolver(tpu='')
+  resolver = tf.distribute.cluster_resolver.TPUClusterResolver(tpu='grpc://' + os.environ['COLAB_TPU_ADDR'])
   tf.config.experimental_connect_to_cluster(resolver)
   # This is the TPU initialization code that has to be at the beginning.
   tf.tpu.experimental.initialize_tpu_system(resolver)
@@ -103,50 +103,45 @@ def main(_):
       test_adj_acc_metric = tf.keras.metrics.SparseCategoricalAccuracy()
 
   # Prepare Tensorboard summary writers.
-  train_summary_writer = tf.summary.create_file_writer(
-      os.path.join(FLAGS.tb_log_dir, 'train'))
-  test_summary_writer = tf.summary.create_file_writer(
-      os.path.join(FLAGS.tb_log_dir, 'test'))
+  # train_summary_writer = tf.summary.create_file_writer(
+  #     os.path.join(FLAGS.tb_log_dir, 'train'))
+  # test_summary_writer = tf.summary.create_file_writer(
+  #     os.path.join(FLAGS.tb_log_dir, 'test'))
 
   # Train for num_epochs iterations over the train set.
   for epoch in range(dataset.num_epochs):
-    # Multiple Steps Function
-    @tf.function
-    def train_multiple_steps(train_dataset):
-      # Step Function
-      def step_fn(step, x, y):
-        step = step.numpy()
-        
-        with tf.GradientTape() as tape:
-          logits = model(x, training=True)
-          loss_value = loss_fn(y, logits)
-          loss_value = loss_value + tf.reduce_sum(model.losses)
+    # Step Function
+    def step_fn(step, x, y):
+      step = step.numpy()
+      
+      with tf.GradientTape() as tape:
+        logits = model(x, training=True)
+        loss_value = loss_fn(y, logits)
+        loss_value = loss_value + tf.reduce_sum(model.losses)
 
-        grads = tape.gradient(loss_value, model.trainable_weights)
-        optimizer.apply_gradients(zip(grads, model.trainable_weights))
+      grads = tape.gradient(loss_value, model.trainable_weights)
+      optimizer.apply_gradients(zip(grads, model.trainable_weights))
 
-        train_acc_metric.update_state(y, logits)
+      train_acc_metric.update_state(y, logits)
 
-        # Log every 1000 batches.
-        if step % 1000 == 0:
-          print(f'Training loss (for one batch) at step {step}: {loss_value:.4f}')
-          with train_summary_writer.as_default():
-            tf.summary.scalar(
-                'batch loss', loss_value, step=epoch * batches_per_epoch + step)
+      # Log every 1000 batches.
+      if step % 1000 == 0:
+        print(f'Training loss (for one batch) at step {step}: {loss_value:.4f}')
+        # with train_summary_writer.as_default():
+        #   tf.summary.scalar(
+        #       'batch loss', loss_value, step=epoch * batches_per_epoch + step)
 
-      # Iterate over the train dataset.
-      for step, (x, y) in enumerate(train_dataset):
-        strategy.run(step_fn, args=(step, x, y))
-    
-    train_multiple_steps(train_dataset)
+    # Iterate over the train dataset.
+    for step, (x, y) in enumerate(train_dataset):
+      strategy.run(step_fn, args=(step, x, y))
 
     # Display train metrics at the end of each epoch.
     train_acc = train_acc_metric.result()
     train_acc_metric.reset_states()
     print(f'Training accuracy over epoch: {train_acc:.4f}')
-    with train_summary_writer.as_default():
-      tf.summary.scalar(
-          'accuracy', train_acc, step=(epoch + 1) * batches_per_epoch)
+    # with train_summary_writer.as_default():
+    #   tf.summary.scalar(
+    #       'accuracy', train_acc, step=(epoch + 1) * batches_per_epoch)
 
     # Run a test loop at the end of each epoch.
     for x, y in test_dataset:
@@ -163,20 +158,20 @@ def main(_):
     test_acc = test_acc_metric.result()
     test_acc_metric.reset_states()
     print(f'Test accuracy: {test_acc:.4f}')
-    with test_summary_writer.as_default():
-      tf.summary.scalar(
-          'accuracy', test_acc, step=(epoch + 1) * batches_per_epoch)
+    # with test_summary_writer.as_default():
+    #   tf.summary.scalar(
+    #       'accuracy', test_acc, step=(epoch + 1) * batches_per_epoch)
 
     if posthoc_adjusting:
       test_adj_acc = test_adj_acc_metric.result()
       test_adj_acc_metric.reset_states()
       print(f'Logit-adjusted test accuracy: {test_adj_acc:.4f}')
 
-      with test_summary_writer.as_default():
-        tf.summary.scalar(
-            'logit-adjusted accuracy',
-            test_adj_acc,
-            step=(epoch + 1) * batches_per_epoch)
+      # with test_summary_writer.as_default():
+      #   tf.summary.scalar(
+      #       'logit-adjusted accuracy',
+      #       test_adj_acc,
+      #       step=(epoch + 1) * batches_per_epoch)
 
 
 if __name__ == '__main__':
