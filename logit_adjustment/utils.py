@@ -171,10 +171,11 @@ def create_tf_dataset(dataset, data_home, batch_size, training):
     A tf.data.Dataset instance.
   """
 
-  filename = dataset.train_file_name if training else dataset.test_file_name
+  # filename = dataset.train_file_name if training else dataset.test_file_name
+  filename = "gs://gresearch/logit_adjustment/cifar10-lt_train.tfrecord" if training else "gs://gresearch/logit_adjustment/cifar10_test.tfrecord"
 
   return tf.data.TFRecordDataset(
-      os.path.join(data_home, filename)
+      filename
   ).shuffle(
       10000
   ).batch(
