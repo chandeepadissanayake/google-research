@@ -45,6 +45,8 @@ flags.DEFINE_string('tb_log_dir', 'logit_adjustment/log',
 
 
 def main(_):
+  tf.config.run_functions_eagerly(True)
+  
   # Initialize TPUs.
   resolver = tf.distribute.cluster_resolver.TPUClusterResolver(tpu='')
   tf.config.experimental_connect_to_cluster(resolver)
@@ -113,6 +115,8 @@ def main(_):
     def train_multiple_steps(train_dataset):
       # Step Function
       def step_fn(step, x, y):
+        step = step.numpy()
+        
         with tf.GradientTape() as tape:
           logits = model(x, training=True)
           loss_value = loss_fn(y, logits)
