@@ -110,30 +110,35 @@ def main(_):
 
   # Train for num_epochs iterations over the train set.
   for epoch in range(dataset.num_epochs):
-    # Step Function
-    def step_fn(step, x, y):
-      step = step.numpy()
+    @tf.function
+    def train_step(step, x, y):
+      # Step Function
+      def step_fn(step, x, y):
+        step = step.numpy()
+        
+        with tf.GradientTape() as tape:
+          logits = model(x, training=True)
+          loss_value = loss_fn(y, logits)
+          loss_value = loss_value + tf.reduce_sum(model.losses)
+
+        grads = tape.gradient(loss_value, model.trainable_weights)
+        optimizer.apply_gradients(zip(grads, model.trainable_weights))
+
+        train_acc_metric.update_state(y, logits)
+
+        # Log every 1000 batches.
+        if step % 1000 == 0:
+          print(f'Training loss (for one batch) at step {step}: {loss_value:.4f}')
+          # with train_summary_writer.as_default():
+          #   tf.summary.scalar(
+          #       'batch loss', loss_value, step=epoch * batches_per_epoch + step)
       
-      with tf.GradientTape() as tape:
-        logits = model(x, training=True)
-        loss_value = loss_fn(y, logits)
-        loss_value = loss_value + tf.reduce_sum(model.losses)
-
-      grads = tape.gradient(loss_value, model.trainable_weights)
-      optimizer.apply_gradients(zip(grads, model.trainable_weights))
-
-      train_acc_metric.update_state(y, logits)
-
-      # Log every 1000 batches.
-      if step % 1000 == 0:
-        print(f'Training loss (for one batch) at step {step}: {loss_value:.4f}')
-        # with train_summary_writer.as_default():
-        #   tf.summary.scalar(
-        #       'batch loss', loss_value, step=epoch * batches_per_epoch + step)
+      strategy.run(step_fn, args=(step, x, y))
 
     # Iterate over the train dataset.
     for step, (x, y) in enumerate(train_dataset):
-      strategy.run(step_fn, args=(step, x, y))
+      train_step(step, x, y)
+      # strategy.run(step_fn, args=(step, x, y))
 
     # Display train metrics at the end of each epoch.
     train_acc = train_acc_metric.result()
