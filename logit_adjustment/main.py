@@ -113,6 +113,7 @@ def main(_):
     @tf.function
     def train_step(step, x, y):
       # Step Function
+      @tf.function
       def step_fn(step, x, y):
         step = step.numpy()
         
